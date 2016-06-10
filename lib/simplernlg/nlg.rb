@@ -67,8 +67,8 @@ module SimplerNLG
       # SVO (conjunction and modifier)
       svo.each do |type, arg|
         svo[type] = mod_helper type, arg, input if arg.is_a?(Container) && arg.is(:modifier)
-        if (arg.is_a?(Array) or arg.is_a?(Hash)) and [:s, :o].include?(type)
-          svo[type] = self.noun_phrase_helper(arg)
+        if (arg.is_a?(Array) or arg.is_a?(Hash)) and [:s, :o].include?(type) and ! arg.first.is_a?(Container)
+          svo[type] = self.noun_phrase_helper arg
         elsif arg.is_a?(Array)
           conjunction_type = arg.shift if [:and,:or, :nor, :neither_nor].include? arg.first
           if arg.length >= 2
@@ -219,7 +219,7 @@ module SimplerNLG
       return nil if word_or_hash.nil?
       if word_or_hash.is_a?(Array)
         conjunction_type = word_or_hash.shift if [:and,:or, :nor, :neither_nor].include? word_or_hash.first
-        nps = word_or_hash.map { |x| noun_phrase_helper x }
+        nps = word_or_hash.map { |part| part.is_a?(SimplerNLG::NLG::Container) && part.is(:modifier) ? mod_helper(type, part, input) : noun_phrase_helper(part) }
         cp = @@factory.create_coordinated_phrase *nps[0..1]
         nps.drop(2).each do |additional_np|
           cp.add_coordinate(additional_np)
