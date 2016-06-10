@@ -10,7 +10,7 @@ module SimplerNLG
   #    from wanting it to choose one of multiple PPs?!?!
   #  [[{}], [{}], [{}]] versus [{}, {}, {}]
   # OKAY, I give up, let's specify the rephraseables somewhere else.
-  
+
   class NLG
     MODIFIERS = [:add_post_modifier, :add_pre_modifier, :add_front_modifier]
 
@@ -47,7 +47,7 @@ module SimplerNLG
     def self.[] *args, &block ;  self.render *args, &block ; end
 
     # main method
-    def self.render *args, &block  
+    def self.render *args, &block
       return @@realiser.realise_sentence @@factory.create_sentence new.instance_eval &block if block
       input = args ? args.first : nil
       return "" unless input
@@ -57,7 +57,7 @@ module SimplerNLG
     def self.phrase input
       return input if input.is_a?(String)
       clause = @@factory.create_clause
-      
+
       # SVO (init)
       s = input[:subject] || input[:s] || ""
       v = input[:verb]    || input[:v]
@@ -67,7 +67,9 @@ module SimplerNLG
       # SVO (conjunction and modifier)
       svo.each do |type, arg|
         svo[type] = mod_helper type, arg, input if arg.is_a?(Container) && arg.is(:modifier)
-        if arg.is_a?(Array)
+        if (arg.is_a?(Array) or arg.is_a?(Hash)) and [:s, :o].include?(type)
+          svo[type] = self.noun_phrase_helper(arg)
+        elsif arg.is_a?(Array)
           conjunction_type = arg.shift if [:and,:or, :nor, :neither_nor].include? arg.first
           if arg.length >= 2
             modded_args = arg.map{|part| part.is_a?(Container) && part.is(:modifier) ? mod_helper(type, part, input) : part }
@@ -75,15 +77,13 @@ module SimplerNLG
             modded_args.drop(2).each{ |additional_coordinate| svo[type].add_coordinate(additional_coordinate) }
           end
           svo[type].set_feature Feature::CONJUNCTION, conjunction_type if conjunction_type
-        elsif arg.is_a?(Hash) and [:s, :o].include?(type)
-          svo[type] = self.noun_phrase_helper(arg)
         end
       end
 
       # SVO (finalize)
       clause.subject = svo[:s]
-      clause.verb    = svo[:v] if svo[:v] 
-      clause.object  = svo[:o] if svo[:o] 
+      clause.verb    = svo[:v] if svo[:v]
+      clause.object  = svo[:o] if svo[:o]
 
       # FEATURES:
       with input[:n] || input[:negation] || input[:negated] do |value|
@@ -175,7 +175,7 @@ module SimplerNLG
             with input[:superlative] || input[:super] do |superlative|
               adjective.set_feature Feature::IS_SUPERLATIVE, superlative
             end
-            mod_phrase.add_modifier(adjective)  
+            mod_phrase.add_modifier(adjective)
           end
           else mod_phrase.add_modifier modifier.to_s
         end
@@ -190,13 +190,13 @@ module SimplerNLG
     def self.adj       *args ; mod_container = mod *args ; mod_container.sub_type = :adjective ; return mod_container ; end
 
     def self.prep_phrase_helper pp
-      # PROBLEM HERE is that 
+      # PROBLEM HERE is that
       # creating a whole clause means it's not a noun phrase, which it should be
       # maybe it always should be?
       # rather than "phrase"
 
-      prep_phrase = NLG.factory.create_preposition_phrase(pp[:preposition] || pp[:prep], (pp[:rest].respond_to?(:has_key?) ? (phrased_rest = self.noun_phrase_helper(pp[:rest]); phrased_rest  ) : pp[:rest]  ))
-      prep_phrase.set_feature(NLG::Feature::APPOSITIVE, pp[:appositive]) 
+      prep_phrase = NLG.factory.create_preposition_phrase(pp[:preposition] || pp[:prep], self.noun_phrase_helper(pp[:rest]))
+      prep_phrase.set_feature(NLG::Feature::APPOSITIVE, pp[:appositive])
       # TODO: is it "appositive" if there's more than one word in the phrase? or if it's not an adverb and adjective?
       NLG.realizer.setCommaSepCuephrase(true) # ensures we get a comma (this, plus the appositive feature)
       [pp[:prepositional_phrases], pp[:prepositional_phrase], pp[:pp]].flatten(1).compact.each do |nested_pp|
@@ -217,20 +217,30 @@ module SimplerNLG
 
     def self.noun_phrase_helper word_or_hash
       return nil if word_or_hash.nil?
-      if word_or_hash.respond_to? :has_key? # testing if it's a Hash, but in a more ducktypingy way than is_a?(Hash)
-        if word_or_hash.has_key? :template_string
+      if word_or_hash.is_a?(Array)
+        conjunction_type = word_or_hash.shift if [:and,:or, :nor, :neither_nor].include? word_or_hash.first
+        nps = word_or_hash.map { |x| noun_phrase_helper x }
+        cp = @@factory.create_coordinated_phrase *nps[0..1]
+        nps.drop(2).each do |additional_np|
+          cp.add_coordinate(additional_np)
+        end
+        cp.set_feature Feature::CONJUNCTION, conjunction_type if conjunction_type
+        cp
+      elsif word_or_hash.respond_to? :has_key? # testing if it's a Hash, but in a more ducktypingy way than is_a?(Hash)
+        if word_or_hash.has_key? :template_string and word_or_hash[:noun].is_a?(String)
           # "%05d" % 123                              #=> "00123"
           # "%-5s: %08x" % [ "ID", self.object_id ]   #=> "ID   : 200e14d6"
           # "foo = %{foo}" % { :foo => 'bar' }        #=> "foo = bar"
           templatized_noun = format(word_or_hash[:template_string], word_or_hash[:noun]) #  "$\1/sq. in."
         else
-          templatized_noun = word_or_hash[:noun]
+          templatized_noun = noun_phrase_helper(word_or_hash[:noun])
         end
         np = @@factory.create_noun_phrase templatized_noun
         np.set_specifier( (spec = self.noun_phrase_helper(word_or_hash[:specifier] || word_or_hash[:spec]); spec.set_feature(Feature::POSSESSIVE, true) unless spec.nil?; spec) || word_or_hash[:determiner] || word_or_hash[:det])
         [word_or_hash[:complement],word_or_hash[:complements],word_or_hash[:c]].flatten(1).compact.each do |complement|
           np.add_complement self.phrase(complement) # to_s added for method signature reasons...
         end
+        np.set_feature SimplerNLG::NLG::LexicalFeature::PROPER, true if word_or_hash[:proper]
         [word_or_hash[:prepositional_phrases], word_or_hash[:prepositional_phrase], word_or_hash[:pp]].flatten(1).compact.each do |pp|
           prep_phrase = prep_phrase_helper pp
           if pp[:position] == :front
