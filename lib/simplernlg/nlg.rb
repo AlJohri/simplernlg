@@ -235,8 +235,21 @@ module SimplerNLG
         else
           templatized_noun = noun_phrase_helper(word_or_hash[:noun])
         end
+        
         np = @@factory.create_noun_phrase templatized_noun
-        np.set_specifier( (spec = self.noun_phrase_helper(word_or_hash[:specifier] || word_or_hash[:spec]); spec.set_feature(Feature::POSSESSIVE, true) unless spec.nil?; spec) || word_or_hash[:determiner] || word_or_hash[:det])
+
+        spec = word_or_hash[:specifier] || word_or_hash[:spec]
+        if spec && spec.include?(' ')
+          multiword = spec.split(' ')
+          spec = self.noun_phrase_helper(multiword.pop)
+          spec.set_feature(Feature::POSSESSIVE, true)
+          spec.add_pre_modifier(multiword.join(' '))
+        elsif spec
+          spec = self.noun_phrase_helper(spec)
+          spec.set_feature(Feature::POSSESSIVE, true)
+        end
+
+        np.set_specifier( spec || word_or_hash[:determiner] || word_or_hash[:det])
         [word_or_hash[:complement],word_or_hash[:complements],word_or_hash[:c]].flatten(1).compact.each do |complement|
           np.add_complement self.phrase(complement) # to_s added for method signature reasons...
         end
